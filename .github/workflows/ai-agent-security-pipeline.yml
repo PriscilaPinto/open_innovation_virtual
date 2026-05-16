@@ -9,9 +9,10 @@ on:
   schedule:
     - cron: "0 3 * * *"
 
+# PRIVILÉGIO MÍNIMO: Permissões de escrita concedidas explicitamente via código apenas para este Workflow
 permissions:
-  contents: write
-  pull-requests: write # ESSENCIAL: Permite que o robô crie o Pull Request sozinho
+  contents: write       # Necessário para criar a branch temporária de correção e commitar
+  pull-requests: write  # Necessário para abrir o Pull Request automaticamente contra a homolog
 
 jobs:
   # ==========================================
@@ -132,19 +133,20 @@ jobs:
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
 
-      # PASSO NOVO: Substitui o index.php vulnerável pelo index_remediated.php que a IA corrigiu e testou
-      - name: Apply AI Patch to index.php
+      # PASSO DE INFRAESTRUTURA: Aplica o patch substituto e limpa a pasta oculta de cache gerada pelo Trivy
+      - name: Apply AI Patch and Clean Cache
         run: |
           cp index_remediated.php index.php
           rm index_remediated.php
+          rm -rf .cache/
 
-      # PASSO NOVO: Cria a branch isolada e abre o PR automaticamente direcionado para a 'homolog'
+      # PASSO DE CRIAÇÃO DO PR: Abre o PR de forma automatizada usando o token com permissão declarada
       - name: 🚀 Create Pull Request to Homolog
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GITHUB_TOKEN }} # Token nativo do GitHub Actions com as permissões acima
+          token: ${{ secrets.GITHUB_TOKEN }}
           branch: fix/ai-autonomous-patch
-          base: homolog # ALVO DO PR: A nossa branch de homologação segura!
+          base: homolog # ALVO DO PR: Branch de homologação segura
           title: "🤖 [AI Remediation] Virtual Patching para mitigação de CVEs"
           body: |
             ## 🛡️ Remediação Autônoma Baseada em IA
