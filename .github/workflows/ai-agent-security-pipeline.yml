@@ -1,0 +1,158 @@
+name: DevSecOps Automated Remediation Pipeline
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write # ESSENCIAL: Permite que o robô crie o Pull Request sozinho
+
+jobs:
+  # ==========================================
+  # JOB 1: SCAN DE VULNERABILIDADES
+  # ==========================================
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.1
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Prepare reports folder
+        run: mkdir -p reports
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" \
+          | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      - name: Run Trivy scan
+        run: |
+          trivy fs . \
+            --format json \
+            --output reports/report.json
+
+      # Upload do relatório para o Job da IA consumir
+      - name: Upload Trivy Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-json
+          path: reports/report.json
+
+  # ==========================================
+  # JOB 2: AGENTE DE IA (GERAÇÃO DO PATCH)
+  # ==========================================
+  ai-remediation:
+    name: 🤖 Executar Agente de IA (Remediação)
+    needs: security-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+
+      - name: Download Trivy Report
+        uses: actions/download-artifact@v4
+        with:
+          name: trivy-report-json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Python Dependencies
+        run: |
+          pip install langchain-core langchain-google-genai
+
+      - name: Run AI Remediation Framework
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python framework.py
+
+      - name: Upload Remediated File Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: remediated-php-file
+          path: index_remediated.php
+
+  # ==========================================
+  # JOB 3: VALIDAÇÃO E ABERTURA AUTOMÁTICA DE PR
+  # ==========================================
+  security-validation:
+    name: 🧪 Validação e Abertura de PR
+    needs: ai-remediation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: homolog # FAZ O CHECKOUT NA HOMOLOG PARA PREPARAR O PATCH SOBRE ELA
+
+      - name: Download Remediated File
+        uses: actions/download-artifact@v4
+        with:
+          name: remediated-php-file
+
+      - name: Setup PHP Environment for Sandbox
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+
+      - name: ⚙️ Teste de Sintaxe (PHP Lint)
+        run: php -l index_remediated.php
+
+      - name: 🔍 Re-scan de Segurança no Código da IA
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: 'index_remediated.php'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+      # PASSO NOVO: Substitui o index.php vulnerável pelo index_remediated.php que a IA corrigiu e testou
+      - name: Apply AI Patch to index.php
+        run: |
+          cp index_remediated.php index.php
+          rm index_remediated.php
+
+      # PASSO NOVO: Cria a branch isolada e abre o PR automaticamente direcionado para a 'homolog'
+      - name: 🚀 Create Pull Request to Homolog
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }} # Token nativo do GitHub Actions com as permissões acima
+          branch: fix/ai-autonomous-patch
+          base: homolog # ALVO DO PR: A nossa branch de homologação segura!
+          title: "🤖 [AI Remediation] Virtual Patching para mitigação de CVEs"
+          body: |
+            ## 🛡️ Remediação Autônoma Baseada em IA
+            Este Pull Request foi gerado automaticamente pelo **Framework de Correção Baseado em Generative AI**.
+
+            ### 📊 Evidências e Validações:
+            - **Análise Sintática (`php -l`):** Passou com sucesso em ambiente sandbox (PHP 8.3).
+            - **Re-scan de Segurança (Trivy):** Executado após a correção e acusou **ZERO** vulnerabilidades Críticas ou Altas.
+
+            _Por favor, revise as alterações de código e aprove o Merge para a branch de homologação (`homolog`)._
+          commit-message: "fix: aplica patch autonomo gerado pela IA"
