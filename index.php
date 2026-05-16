@@ -4,7 +4,10 @@ require 'vendor/autoload.php';
 
 use GuzzleHttp\Client;
 
-$client = new Client();
+$client = new Client([
+    'allow_redirects' => false,
+    'cookies' => false,
+]);
 
 try {
     $response = $client->request('GET', 'https://api.github.com');
