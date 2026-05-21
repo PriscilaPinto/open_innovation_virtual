@@ -1,0 +1,130 @@
+name: DevSecOps Automated Remediation Pipeline
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  # STAGE 1: Coleta estática agnóstica de vulnerabilidades
+  security-scan:
+    name: 🔍 Scan de Vulnerabilidades Multi-Linguagem
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" \
+          | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      - name: Run Trivy scan (Varre a raiz buscando qualquer linguagem)
+        run: |
+          mkdir -p reports
+          trivy fs . --format json --output reports/report.json
+
+      - name: Upload Trivy Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-json
+          path: reports/report.json
+
+  # STAGE 2: O Agente de IA decide a tecnologia e cria o patch sob medida
+  ai-remediation:
+    name: 🤖 Agente de IA Tomador de Decisão (Virtual Patching)
+    needs: security-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+
+      - name: Download Trivy Report
+        uses: actions/download-artifact@v4
+        with:
+          name: trivy-report-json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Python Dependencies
+        run: pip install langchain-core langchain-google-genai
+
+      - name: Run Escalable AI Remediation Framework
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python framework.py
+
+      # Sobe tudo o que foi gerado na raiz (o patch dinâmico e o arquivo de metadados)
+      - name: Upload Remediated Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-virtual-patch-results
+          path: |
+            virtual_patch_*
+            patch_meta.json
+
+  # STAGE 3: Validação genérica da proteção e abertura do Pull Request para Homolog
+  security-validation:
+    name: 🧪 Validação e Abertura de PR Automatizado
+    needs: ai-remediation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: homolog
+
+      - name: Download Remediated Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-virtual-patch-results
+
+      - name: 🔍 Re-scan do patch gerado pela IA
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+
+      # 🛡️ EXPURGO CRÍTICO: Remove o banco de dados gigante de 1GB do Trivy antes que a action do PR tente rastrear alterações
+      - name: 🧹 Evitar Vazamento de Cache (Clean Trivy Assets)
+        run: |
+          echo "Limpando artefatos pesados e arquivos de ambiente do Trivy..."
+          rm -rf .cache/
+          rm -rf trivy_envs.txt
+          echo "Diretório limpo com sucesso!"
+
+      - name: 🚀 Create Pull Request to Homolog
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: fix/ai-autonomous-patch
+          base: homolog
+          title: "🤖 [AI Virtual Patching] Proteção autônoma agnóstica para código legado"
+          body: |
+            ## 🛡️ Remediação Autônoma Baseada em IA - Virtual Patching Escalável
+            Este Pull Request foi gerado automaticamente pelo **Framework Inteligente de Correção**.
+
+            ### 📊 Comportamento do Agente:
+            - **Análise Dinâmica:** O agente de IA leu o relatório do Trivy, identificou o ecossistema tecnológico do repositório em repouso e projetou uma camada externa isolada de Virtual Patching dedicada a esta tecnologia.
+            - **Resiliência:** Nenhuma biblioteca legada foi modificada, eliminando o risco de quebra de compatibilidade em produção.
+          commit-message: "fix: injeta camada autônoma de virtual patching gerada por IA"

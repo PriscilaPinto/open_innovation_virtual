@@ -1,0 +1,33 @@
+name: 🛡️ Homolog Post-Merge Security Gate
+
+on:
+  pull_request:
+    branches:
+      - homolog
+    types:
+      - closed # Só acorda quando um PR com destino à homolog for fechado
+  
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  post-merge-validation:
+    name: 🔍 Scan de Validação Pós-Merge
+    # 🔒 CONDICIONAL CRUCIAL: Só roda se o PR foi aceito (MERGED). Se foi fechado/rejeitado, ignora.
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Homolog Branch
+        uses: actions/checkout@v4
+
+      # Usando a Action oficial para evitar falhas de pacotes do Ubuntu no runner
+      - name: 🔍 Run Final Trivy Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1' # Mantido! Se a IA falhou e o pacote continua vulnerável, a esteira quebra aqui.
